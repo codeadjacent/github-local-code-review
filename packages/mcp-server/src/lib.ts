@@ -3,6 +3,7 @@ import { z } from "zod";
 import { FrameworkDetector } from "./detector.js";
 import OpenAI from "openai";
 import { Octokit } from "@octokit/rest";
+import { Logger } from "./log.js";
 import dotenv from "dotenv";
 import path from "path";
 
@@ -70,7 +71,8 @@ export async function fetchPRData(prUrl: string) {
 
         return {
             filename: f.filename,
-            content: content
+            content: content,
+            patch: f.patch // Include the diff/patch
         };
     }));
 
@@ -81,7 +83,7 @@ export async function fetchPRData(prUrl: string) {
             owner,
             repo,
             path: "package.json",
-            ref: headSha
+            // ref: headSha // Removed to fetch from default branch (main/master)
         }) as any;
 
         if (pkgData.content && pkgData.encoding === 'base64') {
@@ -94,7 +96,7 @@ export async function fetchPRData(prUrl: string) {
 
     return {
         packageJson,
-        files: fileContents.filter(f => f !== null) as Array<{ filename: string, content: string }>
+        files: fileContents.filter(f => f !== null) as Array<{ filename: string, content: string, patch?: string }>
     };
 }
 
@@ -136,19 +138,34 @@ Example:
 
     const userPrompt = `
 Review the following files:
-${data.files.map(f => `--- ${f.filename} ---\n${f.content}`).join("\n")}
+${data.files.map(f => `--- ${f.filename} ---
+${f.patch ? `Diff:\n${f.patch}\n` : ''}
+Full Content:
+${f.content}`).join("\n")}
     `.trim();
 
+    const messages = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+    ];
+
+    // --- Logging ---
+    const logger = new Logger();
+    logger.logRequest(systemPrompt, userPrompt);
+    // ---------------
+
     const completion = await openai.chat.completions.create({
-        messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt }
-        ],
+        messages: messages as any,
         model: "gpt-4o",
         response_format: { type: "json_object" }
     });
 
     const rawContent = completion.choices[0].message.content || "[]";
+
+    // --- Logging Result ---
+    logger.logResult(rawContent);
+    // ---------------------
+
     let comments: Array<{ filename: string, line: number, comment: string }> = [];
 
     try {
