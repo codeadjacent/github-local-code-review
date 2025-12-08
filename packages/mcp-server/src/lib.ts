@@ -31,7 +31,7 @@ function parsePrUrl(url: string) {
 export async function fetchPRData(prUrl: string) {
     console.error(`Fetching PR data for ${prUrl}...`);
 
-    let unuzed;
+    let missspellled;
     const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
     const { owner, repo, pull_number } = parsePrUrl(prUrl);
 
