@@ -120,13 +120,23 @@ Role: Code Reviewer
 Strategy: ${strategy.name}
 Instructions: ${instructions}
 Static Analysis Issues: ${JSON.stringify(staticComments, null, 2)}
+
+Output specific review comments in valid JSON format. 
+Return a SINGLE JSON array of objects.
+Each object must have:
+- "filename": (string) exact file path
+- "line": (number) the line number to comment on (must be > 0). If the issue is general, pick the first relevant line.
+- "comment": (string) the markdown text of the comment
+
+Example:
+[
+  { "filename": "src/index.ts", "line": 15, "comment": "Avoid using any here." }
+]
     `.trim();
 
     const userPrompt = `
 Review the following files:
 ${data.files.map(f => `--- ${f.filename} ---\n${f.content}`).join("\n")}
-
-Provide a JSON array of review comments.
     `.trim();
 
     const completion = await openai.chat.completions.create({
@@ -135,9 +145,54 @@ Provide a JSON array of review comments.
             { role: "user", content: userPrompt }
         ],
         model: "gpt-4o",
+        response_format: { type: "json_object" }
     });
 
-    return completion.choices[0].message.content || "No response from AI";
+    const rawContent = completion.choices[0].message.content || "[]";
+    let comments: Array<{ filename: string, line: number, comment: string }> = [];
+
+    try {
+        const parsed = JSON.parse(rawContent);
+        // Handle if the model returns { "comments": [...] } or just [...]
+        comments = Array.isArray(parsed) ? parsed : (parsed.comments || []);
+    } catch (e) {
+        console.error("Failed to parse AI response as JSON", rawContent);
+        throw new Error("AI returned invalid JSON format");
+    }
+
+    if (comments.length === 0) {
+        return "No issues found by AI.";
+    }
+
+    // Submit Draft Review (Pending)
+    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+    const { owner, repo, pull_number } = parsePrUrl(prUrl);
+
+    // Filter comments to ensure they map to valid files
+    // Note: In a real app, we'd verify line numbers match the diff. 
+    // GitHub API might error if the line isn't part of the diff.
+    // For this prototype, we'll try best effort.
+
+    const reviewComments = comments.map(c => ({
+        path: c.filename,
+        line: c.line,
+        body: c.comment
+    }));
+
+    try {
+        await octokit.pulls.createReview({
+            owner,
+            repo,
+            pull_number,
+            comments: reviewComments,
+            // event: undefined // defaults to PENDING (Draft)
+        });
+        return `Draft review created with ${reviewComments.length} comments. check https://github.com/${owner}/${repo}/pull/${pull_number}`;
+    } catch (e: any) {
+        console.error("Failed to create GitHub review:", e);
+        // Fallback if API fails (e.g. invalid line numbers)
+        return `AI Found issues but could not post to GitHub:\n${JSON.stringify(comments, null, 2)}\nError: ${e.message}`;
+    }
 }
 
 server.tool(
