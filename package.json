@@ -1,19 +1,25 @@
 {
-  "name": "code-review-bot-root",
+  "name": "mcp-server",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
-  "workspaces": [
-    "packages/*"
-  ],
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.159",
+    "@types/node": "^24.10.2"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "tsc && node dist/local_run.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "devDependencies": {
-    "@types/node": "^22.x",
-    "typescript": "^5.x"
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.3",
+    "@octokit/rest": "^22.0.1",
+    "dotenv": "^17.2.3",
+    "openai": "^6.10.0",
+    "typescript": "^5.9.3",
+    "zod": "^4.1.13"
   }
 }
