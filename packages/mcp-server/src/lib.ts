@@ -124,16 +124,18 @@ Instructions: ${instructions}
 Static Analysis Issues: ${JSON.stringify(staticComments, null, 2)}
 
 Output specific review comments in valid JSON format. 
-Return a SINGLE JSON array of objects.
+Return a JSON object with a "reviews" key containing an array of objects.
 Each object must have:
 - "filename": (string) exact file path
 - "line": (number) the line number to comment on (must be > 0). If the issue is general, pick the first relevant line.
 - "comment": (string) the markdown text of the comment
 
 Example:
-[
-  { "filename": "src/index.ts", "line": 15, "comment": "Avoid using any here." }
-]
+{
+  "reviews": [
+    { "filename": "src/index.ts", "line": 15, "comment": "Avoid using any here." }
+  ]
+}
     `.trim();
 
     const userPrompt = `
@@ -160,7 +162,7 @@ ${f.content}`).join("\n")}
         response_format: { type: "json_object" }
     });
 
-    const rawContent = completion.choices[0].message.content || "[]";
+    const rawContent = completion.choices[0].message.content || "{}";
 
     // --- Logging Result ---
     logger.logResult(rawContent);
@@ -170,8 +172,16 @@ ${f.content}`).join("\n")}
 
     try {
         const parsed = JSON.parse(rawContent);
-        // Handle if the model returns { "comments": [...] } or just [...]
-        comments = Array.isArray(parsed) ? parsed : (parsed.comments || []);
+        if (Array.isArray(parsed)) {
+            comments = parsed;
+        } else if (parsed.reviews && Array.isArray(parsed.reviews)) {
+            comments = parsed.reviews;
+        } else if (parsed.comments && Array.isArray(parsed.comments)) {
+            comments = parsed.comments;
+        } else if (parsed.filename && parsed.comment) {
+            // Handle single object case
+            comments = [parsed];
+        }
     } catch (e) {
         console.error("Failed to parse AI response as JSON", rawContent);
         throw new Error("AI returned invalid JSON format");
@@ -207,6 +217,7 @@ ${f.content}`).join("\n")}
         return `Draft review created with ${reviewComments.length} comments. check https://github.com/${owner}/${repo}/pull/${pull_number}`;
     } catch (e: any) {
         console.error("Failed to create GitHub review:", e);
+        logger.logError("github", e);
         // Fallback if API fails (e.g. invalid line numbers)
         return `AI Found issues but could not post to GitHub:\n${JSON.stringify(comments, null, 2)}\nError: ${e.message}`;
     }

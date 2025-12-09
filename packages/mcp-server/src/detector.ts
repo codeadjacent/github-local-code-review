@@ -19,7 +19,7 @@ export class FrameworkDetector {
             id: "generic",
             name: "Generic JS/TS",
             matches: () => true,
-            getReviewInstructions: () => "Review for general code quality, security, and performance.",
+            getReviewInstructions: () => "Perform spell check on variables names only.",
             analyze: async () => []
         };
     }

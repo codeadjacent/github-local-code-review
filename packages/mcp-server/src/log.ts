@@ -50,4 +50,15 @@ export class Logger {
             console.error("Failed to save result log:", e);
         }
     }
+
+    logError(type: string, error: Error) {
+        if (!this.runDir) return;
+
+        try {
+            fs.writeFileSync(path.join(this.runDir, `error_${type}.md`), error.message);
+            console.log(`Error log saved to ${this.runDir}`);
+        } catch (e) {
+            console.error("Failed to save error log:", e);
+        }
+    }
 }

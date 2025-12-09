@@ -39,6 +39,7 @@ async function localRun() {
     }
     if (!process.env.GITHUB_TOKEN) {
         console.warn("⚠️  GITHUB_TOKEN is missing. Rate limits might apply.");
+        console.log("Available Env Keys:", Object.keys(process.env).sort());
     }
 
     try {
