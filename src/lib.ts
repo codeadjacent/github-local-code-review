@@ -1,20 +1,12 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
 import { FrameworkDetector } from "./detector.js";
 import OpenAI from "openai";
 import { Octokit } from "@octokit/rest";
+import { Logger } from "./log.js";
 import dotenv from "dotenv";
 import path from "path";
 
 // Load .env from current directory AND project root
-dotenv.config();
 dotenv.config({ path: path.join(process.cwd(), "../../.env") });
-
-// Create server instance
-export const server = new McpServer({
-    name: "code-review-bot",
-    version: "1.0.0",
-});
 
 const detector = new FrameworkDetector();
 
@@ -30,6 +22,7 @@ function parsePrUrl(url: string) {
 export async function fetchPRData(prUrl: string) {
     console.error(`Fetching PR data for ${prUrl}...`);
 
+    let missspellled;
     const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
     const { owner, repo, pull_number } = parsePrUrl(prUrl);
 
@@ -69,7 +62,8 @@ export async function fetchPRData(prUrl: string) {
 
         return {
             filename: f.filename,
-            content: content
+            content: content,
+            patch: f.patch // Include the diff/patch
         };
     }));
 
@@ -80,7 +74,7 @@ export async function fetchPRData(prUrl: string) {
             owner,
             repo,
             path: "package.json",
-            ref: headSha
+            // ref: headSha // Removed to fetch from default branch (main/master)
         }) as any;
 
         if (pkgData.content && pkgData.encoding === 'base64') {
@@ -93,7 +87,7 @@ export async function fetchPRData(prUrl: string) {
 
     return {
         packageJson,
-        files: fileContents.filter(f => f !== null) as Array<{ filename: string, content: string }>
+        files: fileContents.filter(f => f !== null) as Array<{ filename: string, content: string, patch?: string }>
     };
 }
 
@@ -119,42 +113,103 @@ Role: Code Reviewer
 Strategy: ${strategy.name}
 Instructions: ${instructions}
 Static Analysis Issues: ${JSON.stringify(staticComments, null, 2)}
+
+Output specific review comments in valid JSON format. 
+Return a JSON object with a "reviews" key containing an array of objects.
+Each object must have:
+- "filename": (string) exact file path
+- "line": (number) the line number to comment on (must be > 0). If the issue is general, pick the first relevant line.
+- "comment": (string) the markdown text of the comment
+
+Example:
+{
+  "reviews": [
+    { "filename": "src/index.ts", "line": 15, "comment": "Avoid using any here." }
+  ]
+}
     `.trim();
 
     const userPrompt = `
 Review the following files:
-${data.files.map(f => `--- ${f.filename} ---\n${f.content}`).join("\n")}
-
-Provide a JSON array of review comments.
+${data.files.map(f => `--- ${f.filename} ---
+${f.patch ? `Diff:\n${f.patch}\n` : ''}
+Full Content:
+${f.content}`).join("\n")}
     `.trim();
 
+    const messages = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+    ];
+
+    // --- Logging ---
+    const logger = new Logger();
+    logger.logRequest(systemPrompt, userPrompt);
+    // ---------------
+
     const completion = await openai.chat.completions.create({
-        messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt }
-        ],
+        messages: messages as any,
         model: "gpt-4o",
+        response_format: { type: "json_object" }
     });
 
-    return completion.choices[0].message.content || "No response from AI";
-}
+    const rawContent = completion.choices[0].message.content || "{}";
 
-server.tool(
-    "analyze_pr",
-    { pr_url: z.string().url() },
-    async ({ pr_url }) => {
-        try {
-            const responseText = await runAnalysis(pr_url);
-            return {
-                content: [{
-                    type: "text",
-                    text: responseText
-                }]
-            };
-        } catch (error: any) {
-            return {
-                content: [{ type: "text", text: `AI Error: ${error.message}` }]
-            };
+    // --- Logging Result ---
+    logger.logResult(rawContent);
+    // ---------------------
+
+    let comments: Array<{ filename: string, line: number, comment: string }> = [];
+
+    try {
+        const parsed = JSON.parse(rawContent);
+        if (Array.isArray(parsed)) {
+            comments = parsed;
+        } else if (parsed.reviews && Array.isArray(parsed.reviews)) {
+            comments = parsed.reviews;
+        } else if (parsed.comments && Array.isArray(parsed.comments)) {
+            comments = parsed.comments;
+        } else if (parsed.filename && parsed.comment) {
+            // Handle single object case
+            comments = [parsed];
         }
+    } catch (e) {
+        console.error("Failed to parse AI response as JSON", rawContent);
+        throw new Error("AI returned invalid JSON format");
     }
-);
+
+    if (comments.length === 0) {
+        return "No issues found by AI.";
+    }
+
+    // Submit Draft Review (Pending)
+    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+    const { owner, repo, pull_number } = parsePrUrl(prUrl);
+
+    // Filter comments to ensure they map to valid files
+    // Note: In a real app, we'd verify line numbers match the diff. 
+    // GitHub API might error if the line isn't part of the diff.
+    // For this prototype, we'll try best effort.
+
+    const reviewComments = comments.map(c => ({
+        path: c.filename,
+        line: c.line,
+        body: c.comment
+    }));
+
+    try {
+        await octokit.pulls.createReview({
+            owner,
+            repo,
+            pull_number,
+            comments: reviewComments,
+            // event: undefined // defaults to PENDING (Draft)
+        });
+        return `Draft review created with ${reviewComments.length} comments. check https://github.com/${owner}/${repo}/pull/${pull_number}`;
+    } catch (e: any) {
+        console.error("Failed to create GitHub review:", e);
+        logger.logError("github", e);
+        // Fallback if API fails (e.g. invalid line numbers)
+        return `AI Found issues but could not post to GitHub:\n${JSON.stringify(comments, null, 2)}\nError: ${e.message}`;
+    }
+}

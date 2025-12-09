@@ -5,7 +5,7 @@ import path from "path";
 
 // Load .env from current directory AND project root
 dotenv.config(); // CWD (packages/mcp-server)
-dotenv.config({ path: path.join(process.cwd(), "../../.env") }); // Root (.env)
+dotenv.config({ path: path.join(process.cwd(), ".env") }); // Root (.env)
 
 function askQuestion(query: string): Promise<string> {
     const rl = readline.createInterface({
@@ -39,6 +39,7 @@ async function localRun() {
     }
     if (!process.env.GITHUB_TOKEN) {
         console.warn("⚠️  GITHUB_TOKEN is missing. Rate limits might apply.");
+        console.log("Available Env Keys:", Object.keys(process.env).sort());
     }
 
     try {
