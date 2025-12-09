@@ -1,6 +1,7 @@
 import { FrameworkStrategy } from "./strategies/types.js";
 import { AngularLegacyStrategy } from "./strategies/angular_legacy.js";
 import { AngularModernStrategy } from "./strategies/angular_modern.js";
+import { GenericStrategy } from "./strategies/generic.js";
 
 export class FrameworkDetector {
     private strategies: FrameworkStrategy[] = [
@@ -15,12 +16,6 @@ export class FrameworkDetector {
             }
         }
 
-        return {
-            id: "generic",
-            name: "Generic JS/TS",
-            matches: () => true,
-            getReviewInstructions: () => "Perform spell check on variables names only.",
-            analyze: async () => []
-        };
+        return new GenericStrategy();
     }
 }

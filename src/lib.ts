@@ -1,5 +1,3 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
 import { FrameworkDetector } from "./detector.js";
 import OpenAI from "openai";
 import { Octokit } from "@octokit/rest";
@@ -8,14 +6,7 @@ import dotenv from "dotenv";
 import path from "path";
 
 // Load .env from current directory AND project root
-dotenv.config();
 dotenv.config({ path: path.join(process.cwd(), "../../.env") });
-
-// Create server instance
-export const server = new McpServer({
-    name: "code-review",
-    version: "1.0.0",
-});
 
 const detector = new FrameworkDetector();
 
@@ -222,23 +213,3 @@ ${f.content}`).join("\n")}
         return `AI Found issues but could not post to GitHub:\n${JSON.stringify(comments, null, 2)}\nError: ${e.message}`;
     }
 }
-
-server.tool(
-    "analyze_pr",
-    { pr_url: z.string().url() },
-    async ({ pr_url }) => {
-        try {
-            const responseText = await runAnalysis(pr_url);
-            return {
-                content: [{
-                    type: "text",
-                    text: responseText
-                }]
-            };
-        } catch (error: any) {
-            return {
-                content: [{ type: "text", text: `AI Error: ${error.message}` }]
-            };
-        }
-    }
-);
